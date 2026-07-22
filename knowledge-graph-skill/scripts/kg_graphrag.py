@@ -22,13 +22,17 @@ from kg_core import KGStore, _now_iso
 # ---------------------------------------------------------------------------
 
 class CommunityDetector:
-    """Detect communities in the graph and generate summaries."""
+    """Detect communities in the graph and generate LLM-powered summaries."""
 
-    def __init__(self, store: KGStore):
-        """Initialize with a KGStore instance."""
+    def __init__(self, store: KGStore, config: dict = None):
+        """Initialize with a KGStore instance and optional LLM config."""
         self.store = store
+        self.config = config or {}
         self.communities = {}  # community_id -> {nodes, summary, level}
         self._entity_to_community = {}
+        self._llm_client = None
+        self._llm_model = self.config.get("llm", {}).get("model", "gpt-4o")
+        self._init_llm_client()
 
     def detect(self, algorithm: str = "leiden") -> dict:
         """Run community detection on the current graph."""
@@ -71,22 +75,58 @@ class CommunityDetector:
             "nodes_assigned": len(self._entity_to_community),
         }
 
+    def _init_llm_client(self):
+        """Initialize LLM client for summary generation."""
+        api_key = os.environ.get("OPENAI_API_KEY")
+        api_base = self.config.get("llm", {}).get("api_base", "")
+        if api_key:
+            try:
+                from openai import OpenAI
+                kwargs = {"api_key": api_key}
+                if api_base:
+                    kwargs["base_url"] = api_base
+                self._llm_client = OpenAI(**kwargs)
+            except ImportError:
+                pass
+
     def _generate_summary(self, node_ids: list) -> str:
-        """Generate a text summary for a community of entities."""
+        """Generate a summary for a community using LLM or fallback."""
         names = []
         types = defaultdict(list)
-        for nid in node_ids[:20]:  # Limit for performance
+        descriptions = []
+        for nid in node_ids[:20]:
             ent = self.store.get_entity(nid)
             if ent:
                 names.append(ent["name"])
                 types[ent["type"]].append(ent["name"])
+                if ent.get("description"):
+                    descriptions.append(f"- {ent['name']} ({ent['type']}): {ent['description']}")
 
+        # Try LLM summary
+        if self._llm_client and descriptions:
+            try:
+                entity_text = "\n".join(descriptions[:15])
+                response = self._llm_client.chat.completions.create(
+                    model=self._llm_model,
+                    messages=[
+                        {"role": "system", "content": "Summarize the following "
+                         "knowledge graph community entities into a concise "
+                         "paragraph (2-3 sentences). Focus on relationships "
+                         "and common themes."},
+                        {"role": "user", "content": entity_text},
+                    ],
+                    temperature=0.3,
+                    max_tokens=200,
+                )
+                return response.choices[0].message.content.strip()
+            except Exception:
+                pass
+
+        # Fallback: structured name listing
         parts = []
         for etype, ents in types.items():
             parts.append(f"{etype}: {', '.join(ents[:5])}")
         return f"Community with {len(node_ids)} entities. " + "; ".join(parts)
-
-    def get_community_for_entity(self, entity_id: str) -> Optional[dict]:
         """Get the community an entity belongs to."""
         comm_id = self._entity_to_community.get(entity_id)
         if comm_id:
@@ -265,7 +305,7 @@ class GraphRAGSearch:
         """Initialize with store, community detector, and config."""
         self.store = store
         self.config = config or {}
-        self.community_detector = CommunityDetector(store)
+        self.community_detector = CommunityDetector(store, config)
         self.text2cypher = Text2Cypher(store, config)
         self._communities_detected = False
 

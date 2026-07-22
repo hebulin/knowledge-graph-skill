@@ -29,7 +29,8 @@ import json
 import argparse
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Depends, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel, Field
 
 # Ensure scripts directory is in path for imports
@@ -165,6 +166,17 @@ def create_app(config: dict = None) -> FastAPI:
         version="1.0.0",
     )
 
+    # API Key authentication
+    api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+    expected_api_key = os.environ.get("KG_API_KEY", "")
+
+    async def verify_api_key(api_key: str = Security(api_key_header)):
+        """Verify API key if KG_API_KEY environment variable is set."""
+        if not expected_api_key:
+            return  # Auth disabled (development mode)
+        if api_key != expected_api_key:
+            raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
     # Initialize store and pipeline
     store = KGStore(config=config.get("storage", {}))
     pipeline = ExtractionPipeline(store, config)
@@ -196,7 +208,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 1. Extract Knowledge
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/extract")
+    @app.post("/api/v1/extract", dependencies=[Depends(verify_api_key)])
     async def extract_knowledge(req: ExtractRequest):
         """Extract entities, relations, and events from a document."""
         result = app.state.pipeline.extract(
@@ -214,7 +226,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 2. Create Entity
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/entities")
+    @app.post("/api/v1/entities", dependencies=[Depends(verify_api_key)])
     async def create_entity(req: CreateEntityRequest):
         """Create a new entity with automatic deduplication."""
         entity = Entity(
@@ -228,7 +240,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 3. Update Entity
     # ------------------------------------------------------------------
 
-    @app.patch("/api/v1/entities/{entity_id}")
+    @app.patch("/api/v1/entities/{entity_id}", dependencies=[Depends(verify_api_key)])
     async def update_entity(entity_id: str, req: UpdateEntityRequest):
         """Update entity attributes (partial update)."""
         return app.state.store.update_entity(
@@ -245,7 +257,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 4. Delete Entity
     # ------------------------------------------------------------------
 
-    @app.delete("/api/v1/entities/{entity_id}")
+    @app.delete("/api/v1/entities/{entity_id}", dependencies=[Depends(verify_api_key)])
     async def delete_entity(entity_id: str,
                             cascade: bool = True, reason: str = ""):
         """Soft-delete an entity and optionally cascade to relations."""
@@ -255,7 +267,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 5. Create Relation
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/relations")
+    @app.post("/api/v1/relations", dependencies=[Depends(verify_api_key)])
     async def create_relation(req: CreateRelationRequest):
         """Create a directed relation between two entities."""
         rel = Relation(
@@ -278,7 +290,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 6. Search Entities
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/search/entities")
+    @app.post("/api/v1/search/entities", dependencies=[Depends(verify_api_key)])
     async def search_entities(req: SearchRequest):
         """Search entities using hybrid vector + keyword matching."""
         results = app.state.store.search_entities(
@@ -294,7 +306,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 7. Query Subgraph
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/graph/subgraph")
+    @app.post("/api/v1/graph/subgraph", dependencies=[Depends(verify_api_key)])
     async def query_subgraph(req: SubgraphRequest):
         """Extract a subgraph within N hops from a given entity."""
         return app.state.store.query_subgraph(
@@ -310,7 +322,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 8. Text2Cypher
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/query/text2cypher")
+    @app.post("/api/v1/query/text2cypher", dependencies=[Depends(verify_api_key)])
     async def text2cypher(req: Text2CypherRequest):
         """Convert natural language to Cypher and execute."""
         return app.state.graphrag.text2cypher.query(
@@ -324,7 +336,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 9. GraphRAG Search
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/graphrag/search")
+    @app.post("/api/v1/graphrag/search", dependencies=[Depends(verify_api_key)])
     async def graphrag_search(req: GraphRAGRequest):
         """GraphRAG hybrid retrieval (vector + graph + community)."""
         return app.state.graphrag.search(
@@ -341,7 +353,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 10. Find Paths
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/graph/paths")
+    @app.post("/api/v1/graph/paths", dependencies=[Depends(verify_api_key)])
     async def find_paths(req: FindPathsRequest):
         """Find connection paths between two entities."""
         return app.state.store.find_paths(
@@ -356,7 +368,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 11. Reason
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/reason")
+    @app.post("/api/v1/reason", dependencies=[Depends(verify_api_key)])
     async def reason(req: ReasonRequest):
         """Run neuro-symbolic reasoning over the graph."""
         return _run_reasoning(app.state, req)
@@ -365,7 +377,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 12. Graph Stats
     # ------------------------------------------------------------------
 
-    @app.get("/api/v1/stats")
+    @app.get("/api/v1/stats", dependencies=[Depends(verify_api_key)])
     async def get_stats(detailed: bool = False):
         """Return graph scale, quality, and distribution statistics."""
         return app.state.store.get_stats(detailed=detailed)
@@ -374,7 +386,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 13. Export Graph
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/export")
+    @app.post("/api/v1/export", dependencies=[Depends(verify_api_key)])
     async def export_graph(req: ExportRequest):
         """Export subgraph in various formats."""
         return app.state.exporter.export(
@@ -389,7 +401,7 @@ def create_app(config: dict = None) -> FastAPI:
     # 14. Batch Import
     # ------------------------------------------------------------------
 
-    @app.post("/api/v1/import")
+    @app.post("/api/v1/import", dependencies=[Depends(verify_api_key)])
     async def batch_import(req: ImportRequest):
         """Batch import entities and relations."""
         return _batch_import(app.state.store, req)
@@ -672,7 +684,10 @@ def main():
     app = create_app(config)
 
     import uvicorn
+    api_key_set = bool(os.environ.get("KG_API_KEY"))
+    auth_status = "enabled" if api_key_set else "disabled (set KG_API_KEY env to enable)"
     print(f"KG Skill API Server starting on http://{args.host}:{args.port}")
+    print(f"API Key auth: {auth_status}")
     print(f"Swagger docs: http://{args.host}:{args.port}/docs")
     print(f"Tool definitions: http://{args.host}:{args.port}/api/v1/tools")
     uvicorn.run(app, host=args.host, port=args.port)
