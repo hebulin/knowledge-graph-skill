@@ -8,6 +8,7 @@ Uses Reciprocal Rank Fusion (RRF) to merge multi-source results.
 
 import json
 import os
+import re
 from typing import Optional
 from collections import defaultdict
 
@@ -127,6 +128,8 @@ class CommunityDetector:
         for etype, ents in types.items():
             parts.append(f"{etype}: {', '.join(ents[:5])}")
         return f"Community with {len(node_ids)} entities. " + "; ".join(parts)
+
+    def get_community(self, entity_id: str):
         """Get the community an entity belongs to."""
         comm_id = self._entity_to_community.get(entity_id)
         if comm_id:
@@ -261,34 +264,69 @@ Cypher:"""
         """Simplified query execution against NetworkX graph.
 
         In production, this would execute against Neo4j. In lightweight mode,
-        we interpret common patterns.
+        we dynamically interpret common Cypher patterns.
         """
         results = []
-        cypher_lower = cypher.lower()
 
-        # Pattern: MATCH (a)-[:RELATION]->(b) RETURN a, b
-        rel_match = None
-        for rel_type in ["acquired", "founded", "produces", "works_at",
-                         "competes", "developed", "partnered", "invested"]:
-            if rel_type in cypher_lower:
-                rel_match = rel_type.upper()
-                break
+        # 1. 从 Cypher 中动态提取关系类型 (e.g. [:ACQUIRED], -[:FOUNDED_BY]->)
+        rel_pattern = re.compile(
+            r'(?::\s*"?([A-Z_]{2,})"?\s*[>\]])'
+        )
+        rel_types = set()
+        for m in rel_pattern.finditer(cypher):
+            rel_types.add(m.group(1).upper())
 
-        if rel_match:
+        # 2. 从 WHERE 子句提取属性过滤条件
+        #    e.g. WHERE a.name = "Apple" or WHERE a.name CONTAINS "Apple"
+        name_pattern = re.compile(
+            r'\.name\s*(?:=|CONTAINS|=~)\s*"([^"]+)"', re.IGNORECASE
+        )
+        name_filters = [m.group(1) for m in name_pattern.finditer(cypher)]
+
+        # 3. 执行关系遍历（如果提取到关系类型）
+        if rel_types:
             for u, v, data in self.store.graph.edges(data=True):
-                if data.get("relation_type", "").upper() == rel_match:
+                edge_type = data.get("relation_type", "").upper()
+                if edge_type in rel_types:
                     src = self.store.get_entity(u)
                     tgt = self.store.get_entity(v)
                     if src and tgt:
+                        if name_filters:
+                            matched = any(
+                                nf.lower() in src["name"].lower() or
+                                nf.lower() in tgt["name"].lower()
+                                for nf in name_filters
+                            )
+                            if not matched:
+                                continue
                         results.append({
                             "source": src["name"],
-                            "relation": rel_match,
+                            "source_type": src["type"],
+                            "relation": edge_type,
                             "target": tgt["name"],
+                            "target_type": tgt["type"],
+                            "confidence": data.get("confidence", 1.0),
                         })
                     if len(results) >= max_results:
                         break
-        else:
-            # Fallback: return all entities matching question keywords
+
+        # 4. 如果没有关系匹配，但有名称过滤，按名称搜索实体
+        if not results and name_filters:
+            for nf in name_filters:
+                entities = self.store.search_entities(nf, top_k=max_results)
+                for ent in entities:
+                    results.append({
+                        "name": ent["name"],
+                        "type": ent["type"],
+                        "confidence": ent.get("confidence", 1.0),
+                    })
+                    if len(results) >= max_results:
+                        break
+                if len(results) >= max_results:
+                    break
+
+        # 5. 最终回退：关键词搜索
+        if not results:
             results = self.store.search_entities(question, top_k=max_results)
 
         return results

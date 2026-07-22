@@ -26,7 +26,10 @@ enterprise knowledge management.
 
 ### 1. Install dependencies
 
+Requires Python 3.10+. From the skill root directory:
+
 ```bash
+cd knowledge-graph-skill
 pip install -r assets/requirements.txt
 ```
 
@@ -64,9 +67,8 @@ knowledge-graph-skill/
 ├── SKILL.md                      # This file
 ├── agents/openai.yaml            # UI metadata
 ├── scripts/
-│   ├── kg_core.py               # Core: data model, storage, CRUD, resolution
+│   ├── kg_core.py               # Core: data model, storage, CRUD, query, resolution
 │   ├── kg_extract.py            # Extraction: document -> entities/relations
-│   ├── kg_query.py              # Query: subgraph, paths, neighbors, search
 │   ├── kg_graphrag.py           # GraphRAG: vector + graph + community fusion
 │   ├── kg_server.py             # FastAPI server: 14 REST + Tool Calling APIs
 │   ├── kg_export.py             # Export: Mermaid, JSON-LD, text-tree, CSV
@@ -229,13 +231,13 @@ security:
 
 Keep the knowledge graph in sync with source files:
 
-`ash
+```bash
 # File watcher mode (monitors a directory)
 python scripts/kg_sync.py watch --path /path/to/docs --port 8700
 
 # Git diff mode (process changed files from last commit)
 python scripts/kg_sync.py git-diff --repo /path/to/repo --ref HEAD~1
-`
+```
 
 - Modified files are re-extracted and merged into the graph
 - Deleted files trigger deprecation of associated knowledge entities
@@ -245,9 +247,9 @@ python scripts/kg_sync.py git-diff --repo /path/to/repo --ref HEAD~1
 
 Run basic smoke tests:
 
-`ash
+```bash
 python scripts/test_basic.py
-`
+```
 
 Tests cover: entity CRUD, deduplication, relation queries, PII detection,
 extraction pipeline, graph export, and statistics.

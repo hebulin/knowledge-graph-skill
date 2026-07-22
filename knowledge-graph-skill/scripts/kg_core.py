@@ -279,11 +279,9 @@ class KGStore:
         # 4-stage entity resolution
         match = self._resolve_entity(entity)
         if match:
-            return {
-                "entity_id": match["entity_id"],
-                "status": "merged",
-                "deduplication": match,
-            }
+            return self._merge_entity(
+                match["matched_entity_id"], entity, match
+            )
 
         if not entity.entity_id:
             entity.entity_id = _generate_id("ent")
@@ -952,7 +950,7 @@ class KGStore:
 
         if len(updates) > 2:  # More than just updated_at
             self.conn.execute(
-                f"UPDATE entities SET { .join(updates)} WHERE entity_id=?",
+                f"UPDATE entities SET {', '.join(updates)} WHERE entity_id=?",
                 params,
             )
             self.conn.commit()
@@ -1000,10 +998,17 @@ class KGStore:
             except Exception:
                 pass
         # Fallback: hash-based pseudo-embedding (no API key available)
+        # 使用字符 n-gram + hash 投影生成分布式向量，比 ord() 方式质量更高
         dim = 384
         vec = np.zeros(dim, dtype=np.float32)
-        for i, ch in enumerate(text[:dim]):
-            vec[i % dim] += ord(ch) / 1000.0
+        text_lower = text.lower()
+        for n in (1, 2, 3):
+            for i in range(len(text_lower) - n + 1):
+                gram = text_lower[i:i + n]
+                h = int(hashlib.md5(gram.encode("utf-8")).hexdigest(), 16)
+                idx = h % dim
+                sign = 1.0 if (h >> 8) % 2 == 0 else -1.0
+                vec[idx] += sign
         norm = np.linalg.norm(vec)
         if norm > 0:
             vec = vec / norm

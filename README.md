@@ -37,7 +37,7 @@ python scripts/install-skill-from-github.py --repo hebulin/knowledge-graph-skill
 git clone https://github.com/hebulin/knowledge-graph-skill.git
 cd knowledge-graph-skill/knowledge-graph-skill
 
-# 安装依赖
+# 安装依赖（需要 Python 3.10+）
 pip install -r assets/requirements.txt
 
 # 设置 OpenAI API Key（可选，启用 LLM 抽取和 Text2Cypher）

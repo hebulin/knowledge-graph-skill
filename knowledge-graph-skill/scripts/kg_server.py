@@ -514,6 +514,27 @@ def _run_reasoning(state, req: ReasonRequest) -> dict:
 # Batch Import Implementation
 # ---------------------------------------------------------------------------
 
+def _find_entity_id_by_name(store: KGStore, name: str) -> Optional[str]:
+    """通过实体名称查找实体 ID（精确匹配优先，别名匹配其次）。"""
+    if not name:
+        return None
+    # 先尝试精确名称匹配
+    row = store.conn.execute(
+        "SELECT entity_id FROM entities WHERE name=? AND deleted_at IS NULL",
+        (name,),
+    ).fetchone()
+    if row:
+        return row["entity_id"]
+    # 再尝试别名匹配
+    for row in store.conn.execute(
+        "SELECT entity_id, aliases FROM entities WHERE deleted_at IS NULL"
+    ):
+        aliases = json.loads(row["aliases"] or "[]")
+        if name in aliases:
+            return row["entity_id"]
+    return None
+
+
 def _batch_import(store: KGStore, req: ImportRequest) -> dict:
     """Import entities and relations from structured data."""
     imported = 0
@@ -537,8 +558,45 @@ def _batch_import(store: KGStore, req: ImportRequest) -> dict:
                         if result.get("status") in ("created", "merged"):
                             imported += 1
                     else:
-                        # Relation import
-                        imported += 1
+                        # Relation import - 从 JSON-LD 中提取并创建关系
+                        source_ref = (
+                            item.get("source") or
+                            item.get("subject") or
+                            item.get("source_entity_id", "")
+                        )
+                        target_ref = (
+                            item.get("target") or
+                            item.get("object") or
+                            item.get("target_entity_id", "")
+                        )
+                        # 支持嵌套对象格式 {"source": {"name": "..."}}
+                        if isinstance(source_ref, dict):
+                            source_ref = source_ref.get("name", source_ref.get("@id", ""))
+                        if isinstance(target_ref, dict):
+                            target_ref = target_ref.get("name", target_ref.get("@id", ""))
+
+                        rel_type = item.get(
+                            "relation_type",
+                            item.get("predicate", "RELATED_TO"),
+                        )
+                        # 通过名称查找实体 ID
+                        src_id = _find_entity_id_by_name(store, source_ref)
+                        tgt_id = _find_entity_id_by_name(store, target_ref)
+                        if src_id and tgt_id:
+                            rel = Relation(
+                                source_entity_id=src_id,
+                                relation_type=rel_type,
+                                target_entity_id=tgt_id,
+                                confidence=item.get("confidence", 1.0),
+                                attributes=item.get("attributes", {}),
+                            )
+                            result = store.create_relation(rel)
+                            if result.get("status") in ("created", "merged"):
+                                imported += 1
+                            else:
+                                failed += 1
+                        else:
+                            failed += 1
                 except Exception:
                     failed += 1
 

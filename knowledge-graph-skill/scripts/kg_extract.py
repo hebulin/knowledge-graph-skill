@@ -135,10 +135,24 @@ class RuleExtractor:
         "money": (re.compile(
             r'\$[\d,]+(?:\.\d+)?(?:\s*(?:billion|million|B|M))?'), "Other"),
         "phone": (re.compile(r'\+?\d[\d\s\-()]{8,}\d'), "Other"),
+        # 中文日期
+        "cn_date": (re.compile(
+            r'(\d{4})\s*(?:年|-|/)\s*(\d{1,2})\s*(?:月|-|/)\s*(\d{1,2})\s*日?'), "Other"),
+        # 中文金额
+        "cn_money": (re.compile(
+            r'(?:人民币|约|近|超)?\s*[\d,]+(?:\.\d+)?\s*(?:亿|万|千)元?'), "Other"),
     }
+
+    # 中文组织名后缀 - 用于从文本中识别中文组织实体
+    CN_ORG_SUFFIXES = [
+        "公司", "集团", "银行", "大学", "学院", "研究院", "研究所",
+        "医院", "基金会", "协会", "联盟", "中心", "实验室", "科技",
+        "有限", "股份", "有限合伙",
+    ]
 
     # Relation patterns (subject -> predicate -> object)
     RELATION_PATTERNS = [
+        # English patterns
         (re.compile(
             r'(\w[\w\s]+?)\s+(?:was\s+)?founded\s+(?:by|in)\s+([\w\s,]+)',
             re.IGNORECASE), "FOUNDED_BY"),
@@ -148,6 +162,30 @@ class RuleExtractor:
         (re.compile(
             r'(\w[\w\s]+?)\s+(?:is\s+)?(?:CEO|CTO|CFO|founder)\s+of\s+([\w\s,]+)',
             re.IGNORECASE), "EXECUTIVE_OF"),
+        # Chinese relation patterns
+        (re.compile(
+            r'([\u4e00-\u9fff\w]{2,20}?)\s*成立于\s*(\d{4})\s*年'), "FOUNDED_IN"),
+        (re.compile(
+            r'([\u4e00-\u9fff\w]{2,20}?)\s*(?:由|被)\s*'
+            r'([\u4e00-\u9fff\w]{2,20}?)\s*(?:创立|创办|创建|成立)'),
+            "FOUNDED_BY"),
+        (re.compile(
+            r'([\u4e00-\u9fff\w]{2,20}?)\s*(?:收购|并购|兼并)\s*(?:了\s*)?'
+            r'([\u4e00-\u9fff\w]{2,20}?)'), "ACQUIRED"),
+        (re.compile(
+            r'([\u4e00-\u9fff\w]{2,10}?)\s*(?:担任|出任|任)\s*'
+            r'([\u4e00-\u9fff\w]{2,20}?)\s*(?:的)?\s*'
+            r'(?:CEO|首席执行官|董事长|总裁|CTO|CFO|创始人|总经理)'),
+            "EXECUTIVE_OF"),
+        (re.compile(
+            r'([\u4e00-\u9fff\w]{2,20}?)\s*(?:总部|位于|坐落于)\s*'
+            r'([\u4e00-\u9fff\w]{2,10}?)'), "LOCATED_IN"),
+        (re.compile(
+            r'([\u4e00-\u9fff\w]{2,20}?)\s*(?:投资|注资)\s*(?:了\s*)?'
+            r'([\u4e00-\u9fff\w]{2,20}?)'), "INVESTED_IN"),
+        (re.compile(
+            r'([\u4e00-\u9fff\w]{2,20}?)\s*(?:生产|研发|推出|发布)\s*(?:了\s*)?'
+            r'([\u4e00-\u9fff\w\(\)0-9A-Za-z]{2,30}?)'), "PRODUCES"),
     ]
 
     def extract(self, text: str) -> dict:
@@ -166,7 +204,7 @@ class RuleExtractor:
                     "extraction_method": "rule-based",
                 })
 
-        # Capitalized word sequences as potential named entities
+        # Capitalized word sequences as potential named entities (English)
         cap_pattern = re.compile(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b')
         for match in cap_pattern.finditer(text):
             name = match.group(1)
@@ -178,13 +216,47 @@ class RuleExtractor:
                     "extraction_method": "rule-based",
                 })
 
+        # 中文组织实体抽取（通过后缀匹配）
+        existing_names = {e["name"] for e in entities}
+        org_suffix_alt = "|".join(self.CN_ORG_SUFFIXES)
+        cn_org_pattern = re.compile(
+            r'([\u4e00-\u9fff]{2,15}(?:' + org_suffix_alt + r'))'
+        )
+        for match in cn_org_pattern.finditer(text):
+            name = match.group(1)
+            if name not in existing_names:
+                entities.append({
+                    "name": name,
+                    "type": "Organization",
+                    "confidence": 0.6,
+                    "extraction_method": "rule-based",
+                })
+                existing_names.add(name)
+
+        # 中文人名抽取（2-4 字汉字，出现在关系模式附近）
+        # 简单启发式：匹配 "XX担任/出任/任" 或 "XX创立/创办" 前的人名
+        cn_person_pattern = re.compile(
+            r'([\u4e00-\u9fff]{2,4})\s*(?:担任|出任|任|创立|创办|创建|'
+            r'投资|收购|领导|创建|发明)'
+        )
+        for match in cn_person_pattern.finditer(text):
+            name = match.group(1)
+            if name not in existing_names:
+                entities.append({
+                    "name": name,
+                    "type": "Person",
+                    "confidence": 0.5,
+                    "extraction_method": "rule-based",
+                })
+                existing_names.add(name)
+
         # Relation extraction via patterns
         for pattern, rel_type in self.RELATION_PATTERNS:
             for match in pattern.finditer(text):
                 subj = match.group(1).strip()
                 obj = match.group(2).strip()
                 # Clean trailing punctuation
-                obj = re.sub(r'[.,;].*$', '', obj).strip()
+                obj = re.sub(r'[.,;，。；、].*$', '', obj).strip()
                 relations.append({
                     "subject_name": subj,
                     "relation_type": rel_type,
