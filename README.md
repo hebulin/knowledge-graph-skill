@@ -201,25 +201,25 @@ docker-compose up -d             # 启动 API + Neo4j + Qdrant
 | 银行卡号 | 正则 | 保留后4位 | **** **** **** 1234 |
 | IP 地址 | 正则 | 保留前两段 | 192.168.***.*** |
 
-在 [ssets/config/default_config.yaml](https://github.com/hebulin/knowledge-graph-skill/blob/main/knowledge-graph-skill/assets/config/default_config.yaml) 中配置：
+在 [`assets/config/default_config.yaml`](https://github.com/hebulin/knowledge-graph-skill/blob/main/knowledge-graph-skill/assets/config/default_config.yaml) 中配置：
 
-`yaml
+```yaml
 security:
   pii_detection: true       # 开启 PII 检测
   pii_masking: true         # 开启脱敏
-`
+```
 
 ### API Key 鉴权
 
 设置环境变量启用接口鉴权：
 
-`ash
+```bash
 # Linux / macOS
 export KG_API_KEY=your-secret-key
 
 # Windows PowerShell
 $env:KG_API_KEY="your-secret-key"
-`
+```
 
 启用后，所有业务接口需要在请求头中携带 `X-API-Key: your-secret-key`。健康检查（`/api/v1/health`）和工具定义（`/api/v1/tools`）无需鉴权。未设置环境变量时鉴权自动关闭（开发模式）。
 
@@ -227,13 +227,13 @@ $env:KG_API_KEY="your-secret-key"
 
 保持知识图谱与源文件同步：
 
-`ash
+```bash
 # 文件监听模式：监控目录变化，自动增量抽取
 python scripts/kg_sync.py watch --path /path/to/docs --port 8700
 
 # Git diff 模式：处理最近一次提交的变更文件
 python scripts/kg_sync.py git-diff --repo /path/to/repo --ref HEAD~1
-`
+```
 
 - 文件修改时：重新抽取内容并合并入图谱（自动消歧）
 - 文件删除时：通过溯源信息反查关联实体，标记为低置信度（过期）
@@ -243,10 +243,10 @@ python scripts/kg_sync.py git-diff --repo /path/to/repo --ref HEAD~1
 
 运行基础冒烟测试：
 
-`ash
+```bash
 cd knowledge-graph-skill/knowledge-graph-skill
 python scripts/test_basic.py
-`
+```
 
 覆盖 7 个测试用例：实体 CRUD、实体消歧、关系查询、PII 检测、抽取管道、图导出、图谱统计。
 
