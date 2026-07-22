@@ -1,0 +1,26 @@
+﻿# KG Skill - Python dependencies
+# Core
+fastapi>=0.110.0
+uvicorn>=0.29.0
+pydantic>=2.6.0
+networkx>=3.2
+
+# Storage
+# (sqlite3 is built-in, no pip needed)
+
+# LLM & Embedding
+openai>=1.30.0
+numpy>=1.26.0
+
+# NLP (optional, for rule-based extraction)
+# spacy>=3.7.0
+# gliner>=0.2.0
+
+# Vector search (lightweight mode uses numpy; production uses qdrant-client)
+# qdrant-client>=1.9.0
+
+# Graph database (production mode only)
+# neo4j>=5.20.0
+
+# Export
+# graphviz>=0.20.0  (for Graphviz DOT rendering, optional)

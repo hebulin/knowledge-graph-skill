@@ -1,0 +1,7 @@
+﻿interface:
+  display_name: "Knowledge Graph"
+  short_description: "Build & query knowledge graphs for GraphRAG"
+  brand_color: "#2563EB"
+  default_prompt: "Use $knowledge-graph-skill to build a knowledge graph from documents and answer complex questions with GraphRAG hybrid retrieval."
+policy:
+  allow_implicit_invocation: true

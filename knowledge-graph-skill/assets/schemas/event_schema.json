@@ -1,0 +1,15 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Event",
+  "type": "object",
+  "required": ["event_type", "participants", "occurred_at"],
+  "properties": {
+    "event_id": {"type": "string", "pattern": "^evt_.*$"},
+    "event_type": {"type": "string", "enum": ["Acquisition","Merger","Launch","Meeting","Transaction","Lawsuit","Partnership","Other"]},
+    "participants": {"type": "array", "minItems": 2, "items": {"type": "object", "required": ["entity_id","role"], "properties": {"entity_id": {"type": "string"}, "role": {"type": "string"}}}},
+    "attributes": {"type": "object", "additionalProperties": true},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "description": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  }
+}

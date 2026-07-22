@@ -1,0 +1,38 @@
+﻿version: "3.9"
+
+services:
+  kg-api:
+    build:
+      context: ../..
+      dockerfile: assets/docker/Dockerfile
+    ports:
+      - "8700:8700"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - kg-data:/root/.knowledge-graph-skill
+    depends_on:
+      - neo4j
+      - qdrant
+
+  neo4j:
+    image: neo4j:5.20
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/kgskill
+    volumes:
+      - neo4j-data:/data
+
+  qdrant:
+    image: qdrant/qdrant:v1.9.0
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+
+volumes:
+  kg-data:
+  neo4j-data:
+  qdrant-data:

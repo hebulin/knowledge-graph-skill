@@ -1,0 +1,45 @@
+﻿# KG Skill Default Configuration
+
+storage:
+  mode: lightweight              # lightweight | production
+  sqlite_path: "~/.knowledge-graph-skill/kg.db"
+  neo4j_uri: "bolt://localhost:7687"
+  neo4j_user: "neo4j"
+  neo4j_password: "kgskill"
+  qdrant_url: "http://localhost:6333"
+
+extraction:
+  strategy: auto                 # auto | rule_first | llm_first
+  chunk_size: 512
+  chunk_overlap: 64
+  auto_resolve: true
+
+llm:
+  model: gpt-4o
+  api_base: ""                   # empty = use OPENAI_API_KEY env
+  max_tokens: 4096
+  temperature: 0.1
+
+embedding:
+  model: text-embedding-3-small
+  dimension: 1536
+
+graphrag:
+  default_strategy: auto         # auto | vector | graph | hybrid | community
+  max_context_entities: 20
+  max_context_relations: 30
+  min_confidence: 0.6
+  community_algorithm: leiden
+
+entity_resolution:
+  semantic_threshold: 0.85       # cosine similarity for auto-merge
+  review_threshold: 0.75         # below this, send to review queue
+
+security:
+  pii_detection: true
+  pii_masking: true
+  read_only_text2cypher: true
+
+server:
+  host: "0.0.0.0"
+  port: 8700
