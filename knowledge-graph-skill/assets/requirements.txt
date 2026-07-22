@@ -4,13 +4,16 @@ fastapi>=0.110.0
 uvicorn>=0.29.0
 pydantic>=2.6.0
 networkx>=3.2
+requests>=2.31.0
 
-# Storage
-# (sqlite3 is built-in, no pip needed)
+# Storage (sqlite3 is built-in, no pip needed)
 
 # LLM & Embedding
 openai>=1.30.0
 numpy>=1.26.0
+
+# Document Sync (file watcher, optional)
+watchdog>=4.0.0
 
 # NLP (optional, for rule-based extraction)
 # spacy>=3.7.0
@@ -22,5 +25,5 @@ numpy>=1.26.0
 # Graph database (production mode only)
 # neo4j>=5.20.0
 
-# Export
-# graphviz>=0.20.0  (for Graphviz DOT rendering, optional)
+# Testing (optional)
+# pytest>=8.0.0

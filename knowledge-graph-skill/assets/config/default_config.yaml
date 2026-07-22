@@ -40,6 +40,10 @@ security:
   pii_masking: true
   read_only_text2cypher: true
 
+api:
+  key_env: KG_API_KEY          # Set this env var to enable API auth
+  auth_enabled: true            # Set false to disable auth entirely
+
 server:
   host: "0.0.0.0"
   port: 8700

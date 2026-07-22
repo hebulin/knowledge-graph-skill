@@ -69,7 +69,10 @@ knowledge-graph-skill/
 │   ├── kg_query.py              # Query: subgraph, paths, neighbors, search
 │   ├── kg_graphrag.py           # GraphRAG: vector + graph + community fusion
 │   ├── kg_server.py             # FastAPI server: 14 REST + Tool Calling APIs
-│   └── kg_export.py             # Export: Mermaid, JSON-LD, text-tree, CSV
+│   ├── kg_export.py             # Export: Mermaid, JSON-LD, text-tree, CSV
+│   ├── kg_pii.py                 # PII detection & masking
+│   ├── kg_sync.py                # Document sync (file watcher + git diff)
+│   └── test_basic.py             # Smoke tests
 ├── references/
 │   ├── api_reference.md         # All 14 API endpoints documented
 │   ├── data_model.md            # Entity/Relation/Event JSON Schemas
@@ -212,6 +215,42 @@ security:
   Answers cite original text, reducing hallucination.
 - **Soft delete + temporal versioning**: deleted entities are marked, not
   removed. Attribute history is preserved for time-travel queries.
+
+## Security Features
+
+- **PII Detection & Masking**: Automatically detects and masks emails, phone
+  numbers, ID cards, bank cards, and IP addresses before extraction. Configure
+  via security.pii_detection in config. See scripts/kg_pii.py.
+- **API Key Authentication**: Set KG_API_KEY environment variable to require
+  X-API-Key header on all business endpoints. Health check and tool
+  definitions remain public. Disabled by default for development.
+
+## Document Sync
+
+Keep the knowledge graph in sync with source files:
+
+`ash
+# File watcher mode (monitors a directory)
+python scripts/kg_sync.py watch --path /path/to/docs --port 8700
+
+# Git diff mode (process changed files from last commit)
+python scripts/kg_sync.py git-diff --repo /path/to/repo --ref HEAD~1
+`
+
+- Modified files are re-extracted and merged into the graph
+- Deleted files trigger deprecation of associated knowledge entities
+- Requires watchdog package for file watcher mode
+
+## Testing
+
+Run basic smoke tests:
+
+`ash
+python scripts/test_basic.py
+`
+
+Tests cover: entity CRUD, deduplication, relation queries, PII detection,
+extraction pipeline, graph export, and statistics.
 
 ## Production Deployment
 

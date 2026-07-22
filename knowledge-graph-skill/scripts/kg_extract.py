@@ -15,6 +15,7 @@ import os
 from typing import Optional
 
 from kg_core import Entity, Relation, Document, Chunk, KGStore, _generate_id, _now_iso
+from kg_pii import PIIDetector
 
 
 # ---------------------------------------------------------------------------
@@ -292,6 +293,8 @@ class ExtractionPipeline:
             model=self.config.get("llm", {}).get("model", "gpt-4o"),
             api_base=self.config.get("llm", {}).get("api_base", ""),
         )
+        self.pii_detector = PIIDetector() if self.config.get(
+            "security", {}).get("pii_detection", True) else None
 
     def extract(self, content: str, fmt: str = "auto",
                 strategy: str = "auto",
@@ -311,6 +314,11 @@ class ExtractionPipeline:
             content=content[:10000],  # Truncate for storage
         )
         self.store.save_document(doc)
+
+        # PII detection and masking (before extraction)
+        pii_report = []
+        if self.pii_detector:
+            content, pii_report = self.pii_detector.detect_and_mask(content)
 
         # Parse and chunk
         chunks = self.parser.parse(content, fmt, chunk_size, chunk_overlap)
@@ -432,6 +440,7 @@ class ExtractionPipeline:
         return {
             "doc_id": doc.doc_id,
             "status": "completed",
+            "pii_masked": pii_report if pii_report else None,
             "summary": {
                 "chunks_created": len(chunks),
                 "entities_extracted": len(created_entities),

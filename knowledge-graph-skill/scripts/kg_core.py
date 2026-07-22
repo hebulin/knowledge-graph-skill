@@ -166,8 +166,14 @@ class KGStore:
         self.conn.row_factory = sqlite3.Row
         self.graph = nx.MultiDiGraph()
         self._embeddings = {}  # entity_id -> np.array
+        self._embedding_client = None
+        self._embedding_model = self.config.get("embedding", {}).get(
+            "model", "text-embedding-3-small"
+        )
         self._init_db()
         self._load_graph()
+        self._init_embedding_client()
+        self._load_embeddings()
 
     def _init_db(self):
         """Create SQLite tables if they do not exist."""
@@ -235,6 +241,10 @@ class KGStore:
         CREATE INDEX IF NOT EXISTS idx_entity_name ON entities(name);
         CREATE INDEX IF NOT EXISTS idx_entity_type ON entities(type);
         CREATE INDEX IF NOT EXISTS idx_relation_type ON relations(relation_type);
+        CREATE TABLE IF NOT EXISTS embeddings (
+            entity_id TEXT PRIMARY KEY,
+            embedding TEXT
+        );
         """)
         self.conn.commit()
 
@@ -299,6 +309,9 @@ class KGStore:
             entity.entity_id, name=entity.name,
             type=entity.type, confidence=entity.confidence,
         )
+        # Generate and store embedding for the new entity
+        if entity.description:
+            self.generate_and_store_embedding(entity.entity_id, entity.description)
         return {"entity_id": entity.entity_id, "status": "created",
                 "deduplication": {"matched": False}}
 
@@ -841,14 +854,152 @@ class KGStore:
         """Store an embedding vector for an entity (in-memory)."""
         self._embeddings[entity_id] = np.array(embedding, dtype=np.float32)
 
+    def _merge_entity(self, existing_id: str, new_entity: Entity,
+                      match_info: dict) -> dict:
+        """Merge a new entity into an existing one with conflict resolution.
+
+        Conflict resolution strategy (by priority):
+        1. Higher confidence wins for conflicting attribute values
+        2. If equal confidence, newer timestamp wins
+        3. Non-conflicting attributes are merged (union)
+        """
+        existing = self.get_entity(existing_id)
+        if not existing:
+            return {"entity_id": existing_id, "status": "error",
+                    "message": "Existing entity not found"}
+
+        merged_fields = []
+        conflicts_resolved = []
+        updates = []
+        params = []
+
+        # Merge aliases (union)
+        existing_aliases = set(existing.get("aliases", []))
+        new_aliases = set(new_entity.aliases)
+        all_aliases = existing_aliases | new_aliases
+        if new_aliases - existing_aliases:
+            updates.append("aliases=?")
+            params.append(json.dumps(list(all_aliases), ensure_ascii=False))
+            merged_fields.append("aliases")
+
+        # Merge attributes with conflict resolution
+        existing_attrs = existing.get("attributes", {})
+        new_attrs = new_entity.attributes
+        for key, new_val in new_attrs.items():
+            if key not in existing_attrs:
+                # New attribute, add it
+                existing_attrs[key] = new_val
+                merged_fields.append(f"attributes.{key}")
+            elif existing_attrs[key] != new_val:
+                # Conflict: resolve by confidence
+                if new_entity.confidence > existing.get("confidence", 0.5):
+                    conflicts_resolved.append({
+                        "field": f"attributes.{key}",
+                        "old_value": existing_attrs[key],
+                        "new_value": new_val,
+                        "reason": "higher_confidence",
+                    })
+                    existing_attrs[key] = new_val
+                    merged_fields.append(f"attributes.{key}")
+                # else: keep existing (higher confidence)
+        if new_attrs:
+            updates.append("attributes=?")
+            params.append(json.dumps(existing_attrs, ensure_ascii=False))
+
+        # Update confidence (Bayesian-like update)
+        old_conf = existing.get("confidence", 0.5)
+        new_conf = new_entity.confidence
+        merged_conf = (old_conf + new_conf * 0.5) / 1.5
+        updates.append("confidence=?")
+        params.append(round(merged_conf, 4))
+
+        # Update description if new one is longer/better
+        if new_entity.description and len(new_entity.description) > len(
+            existing.get("description", "")
+        ):
+            updates.append("description=?")
+            params.append(new_entity.description)
+            merged_fields.append("description")
+
+        # Merge tags (union)
+        existing_tags = set(existing.get("tags", []))
+        new_tags = set(new_entity.tags)
+        all_tags = existing_tags | new_tags
+        if new_tags - existing_tags:
+            updates.append("tags=?")
+            params.append(json.dumps(list(all_tags), ensure_ascii=False))
+            merged_fields.append("tags")
+
+        # Merge provenance (append source)
+        existing_prov = existing.get("provenance", {})
+        if new_entity.provenance:
+            sources = existing_prov.get("sources", [])
+            if not sources:
+                sources = [{"source_doc_id": existing_prov.get("source_doc_id"),
+                           "extraction_method": existing_prov.get("extraction_method")}]
+            sources.append({
+                "source_doc_id": new_entity.provenance.get("source_doc_id"),
+                "extraction_method": new_entity.provenance.get("extraction_method"),
+            })
+            existing_prov["sources"] = sources
+            updates.append("provenance=?")
+            params.append(json.dumps(existing_prov, ensure_ascii=False))
+            merged_fields.append("provenance")
+
+        updates.append("updated_at=?")
+        params.append(_now_iso())
+        params.append(existing_id)
+
+        if len(updates) > 2:  # More than just updated_at
+            self.conn.execute(
+                f"UPDATE entities SET { .join(updates)} WHERE entity_id=?",
+                params,
+            )
+            self.conn.commit()
+
+        # Regenerate embedding with merged description
+        desc = existing.get("description", "")
+        if new_entity.description and len(new_entity.description) > len(desc):
+            desc = new_entity.description
+        if desc:
+            self.generate_and_store_embedding(existing_id, desc)
+
+        return {
+            "entity_id": existing_id,
+            "status": "merged",
+            "deduplication": match_info,
+            "merged_fields": merged_fields,
+            "conflicts_resolved": conflicts_resolved,
+            "merged_confidence": round(merged_conf, 4),
+        }
+
+    def _init_embedding_client(self):
+        """Initialize OpenAI embedding client if API key is available."""
+        api_key = os.environ.get("OPENAI_API_KEY")
+        api_base = self.config.get("llm", {}).get("api_base", "")
+        if api_key:
+            try:
+                from openai import OpenAI
+                kwargs = {"api_key": api_key}
+                if api_base:
+                    kwargs["base_url"] = api_base
+                self._embedding_client = OpenAI(**kwargs)
+            except ImportError:
+                pass
+
     def _get_query_embedding(self, text: str) -> Optional[np.array]:
-        """Get embedding for a query string. Override in production with
-        actual embedding model call."""
-        # Placeholder: hash-based pseudo-embedding for lightweight mode
-        # In production, replace with OpenAI/local model embedding
+        """Get embedding for a query string using OpenAI API or hash fallback."""
         if not text:
             return None
-        # Simple deterministic pseudo-embedding (replace with real model)
+        if self._embedding_client:
+            try:
+                resp = self._embedding_client.embeddings.create(
+                    model=self._embedding_model, input=text
+                )
+                return np.array(resp.data[0].embedding, dtype=np.float32)
+            except Exception:
+                pass
+        # Fallback: hash-based pseudo-embedding (no API key available)
         dim = 384
         vec = np.zeros(dim, dtype=np.float32)
         for i, ch in enumerate(text[:dim]):
@@ -857,6 +1008,30 @@ class KGStore:
         if norm > 0:
             vec = vec / norm
         return vec
+
+    def generate_and_store_embedding(self, entity_id: str, text: str):
+        """Generate embedding for an entity description and store it."""
+        if not text:
+            return
+        vec = self._get_query_embedding(text)
+        if vec is not None:
+            self.set_embedding(entity_id, vec.tolist())
+            # Persist to SQLite
+            self.conn.execute(
+                "INSERT OR REPLACE INTO embeddings (entity_id, embedding) VALUES (?, ?)",
+                (entity_id, json.dumps(vec.tolist())),
+            )
+            self.conn.commit()
+
+    def _load_embeddings(self):
+        """Load persisted embeddings from SQLite into memory."""
+        try:
+            for row in self.conn.execute("SELECT entity_id, embedding FROM embeddings"):
+                self._embeddings[row["entity_id"]] = np.array(
+                    json.loads(row["embedding"]), dtype=np.float32
+                )
+        except Exception:
+            pass  # Table may not exist yet
 
     # ------------------------------------------------------------------
     # Helpers
